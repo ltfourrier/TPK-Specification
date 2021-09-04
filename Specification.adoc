@@ -1,0 +1,248 @@
+= TPK - Tiwind PacKage
+Laurent T. Fourrier <ltfourrier@gmail.com>
+1.0-Unstable, {docdate}
+:description: Specification of the Tiwind Package format.
+:sectanchors:
+
+This document specifies the requirements for:
+
+* Tiwind Package files and payloads,
+* Implementation that consumes or produces Tiwind Package files and payloads.
+
+== Introduction
+
+Tiwind Package is a binary data container format which has the following capabilities:
+
+* Store applicative primitive types, like both signed and unsigned numbers, integers, UTF-8 strings, booleans...
+* Store files, payloads or other data as binary blobs.
+* Organize data in a filesystem-like structure, with an implicit folder as the root.
+* Support extensions, which are designed to be optional or not, for both the _reader_ and the _writer_.
+
+=== Motivations
+
+Tiwind Packages are meant to be used by applications to communicate between each other, including between backends and frontends. The format is meant to be versatile, robust and lightweight, while still providing an extension mechanism to fit as many use cases as possible, while keeping a base that can be understood by many applications.
+
+In particular, Tiwind Packages are meant to answer the following needs:
+
+* Share *any* kind of structured data from a _writer_ to a _reader_.
+* Be quickly validated by the _reader_.
+* Be both written and read with as little copy as possible.
+* Be as buffer-efficient as possible during reading or writing.
+* Be as extensible as possible, while providing a common base to simplify implementations for custom needs.
+* Be streamable, or even be used in an client-server exchange kind of way, thanks to extensions.
+
+== Concepts
+
+Tiwind Packages are structured using different concepts, each of them being explained in this section.
+
+These concepts are important to understand how the Tiwind Package format works, and will be referred to with the assumption that the reader is familiar with them through the rest of this document.
+
+=== Package
+
+A package is the entirety of both the data and metadata contained by a Tiwind Package: it contains everything that the file or payload has to contain.
+
+A package contains two main elements:
+
+* A manifest, which contains metadata about the package: TPK version, extensions, package options, etc...
+* A data block, which will contain the data for every entry that the manifest has declared.
+
+=== Manifest
+
+A manifest contains metadata about the package, and the data it contains. This metadata can be useful for various reasons: giving hints to the _reader_ on how to read the file, or giving information that the human operating the _reader_ might be interested in.
+
+Most manifest data is optional, and as such is presented to the _reader_ in a key/value fashion. There are a few required values that are common to all packages, and as such are key-less:
+
+* The TPK magic bits and version number,
+* The size of the metadata block.
+
+The rest of the manifest is then organized using a dictionary of keys and values. Keys are a single byte of data identifying the value, whose length and format depends on which type of metadata it represents.
+
+Those elements are all optional, and may contain the following data:
+
+* The extension identifiers for each of the 16 extension slots available,
+* The extension dependencies,
+* The endianness of the multi-byte values present in the package,
+* The size of the package, in its entirety.
+
+There is only one manifest per package.
+
+=== Data Block
+
+A data block contains the root folder and every single entry it might contain, recursively. In short, it contains the data that the package is supposed to contain.
+
+The data block is presented in a filesystem-like structure. This can be seen as a semantic decision when comparing TPK to another data container format: dictionaries are folders, arrays are collections and entries are files; but this is an important one when thinking about extensibility.
+
+=== Entries
+
+An entry, also called a file, is a single element present in the data block. This element might represent structural data such as folders or collections, actual data such as binary blobs or strings, metadata or even custom extension data.
+
+It is important to note that while the file is structured, there is no notion of hierarchy associated with an entry. For example, a folder entry does not contain entries, but merely instructs the reader to enter the folder with the given name.
+
+=== Folders
+
+A folder is both a concept and a kind of entry.
+
+The concept of a folder is to have a named container that contains other named data. In that sense, it is not much different from what you would expect from a dictionary or object to be in a different format.
+
+A folder entry is a special instruction contained in the data block that tells the reader to jump into a folder of a given name. This means that every subsequent entries will be considered part of this named container.
+
+A folder entry can go in both directions or even start from the root, similarly to what you'd expect from the argument given to a `cd` command on a Unix filesystem, for example.
+
+=== Collections
+
+A collection is a special type of folder, whose entries are automatically given a numeric name, called an index. This index starts at zero, and is incremented by one for every entry that is added to the collection. Collections can only contain entries with numeric names.
+
+A collection entry instructs the reader to go into collection mode, which:
+
+* Disables naming for every subsequent entry, as indices are automatically generated.
+* Waits for another folder entry to disable collection mode.
+
+==== Interoperability with Folders
+
+Since collections are special folders, they can interact closely with other folder entries. For example, in order to close a collection, a `..` folder entry can be provided.
+
+Folder entries can also be used to enter existing collection paths. As an example, let's consider the following case:
+
+* A collection `apples` is created in the `/fruits` folder.
+* Three folders containing data about each individual apple are added to the collection.
+* The writer does some other processing and fully exits the `/fruits/apples` collection.
+* Later while writing the package, the writer wants to modify a value in the second apple in stock.
+* A `/fruits/apples/1` folder entry would instruct the reader to jump into the second element in the `/fruits/apples` collection.
+
+Note that this index folder notation only works with existing elements. It is not possible to create new elements in the collection using a folder entry.
+
+These two cases are the only ones where collection/folder interoperability is allowed. It is not possible, for example, to use a folder entry to jump into a collection and vice-versa.
+
+=== Primitives
+
+Primitives are entries that simply maps a single path to a single chunk of data. This chunk of data is typed, and can be one of the following:
+
+* A number, with the following variations:
+** Signed or Unsigned
+** Integer or IEEE 754 floating point
+** 8, 16, 32 or 64 bits.
+* A boolean.
+* A UTF-8 string.
+* A binary blob.
+
+=== Extensions
+
+Extensions are flags to activate additional rules that can be given to the reader from the writer. This implies, of course, that both the reader and the writer know about the rules of the extension.
+
+A registered extension is given one custom entry type. If the extension requires more than one entry type, then it needs to implement its own type system inside of the extension entry.
+
+There is two types of extensions:
+
+* Optional extensions, which extend the data that already exists as base TPK entries. This means that even if the reader does not know about this extension, the data contained in the package can still fully or partially make sense by simply ignoring extension entries.
+* Mandatory extensions, which would make the data unreadable or not make sense at all if the reader does not understand the extension entries.
+
+It is strongly discouraged to use mandatory extensions. Thanks to TPK's folder-like structure, most extensions can be implemented as optional, but it is sometimes necessary to use mandatory extensions, when the size of an extension entry is not known at writing time, for example.
+
+==== Conventions
+
+There's a few conventions to adhere to while implementing TPK extensions, to avoid as much as possible collision between extensions:
+
+* The names of entries that contain metadata should begin with `.`.
+* Extensions should always try to bring new features by extending on base ones. For example, instead of defining a new folder type, a special metadata entry should be added inside of a base folder entry.
+
+== TPK Syntax
+
+Here is the full syntax of a TPK package, in pseudo-ABNF. This pseudo-ABNF language uses IETF's RFC7405 as a base, adds the `$` terminal value (which takes the eight next terminal values as "0" or "1" bits to form a 8-bit byte) and provides mandatory guidance for implementers in an annex.
+
+....
+package = manifest data
+
+; Manifest
+manifest = magic version mt-size *mt-entry
+magic    = %s"FRVD"
+version  = 2BYTE
+mt-size  = 2BYTE
+mt-entry = mt-extension / mt-dependencies / mt-endianness / mt-size
+
+; Extension metadata
+mt-extension    = $ ("0000" mt-ext-id) mt-ext-namever
+mt-ext-id       = 4BIT
+mt-ext-namever  = tiny-string
+mt-dependencies = 2BYTE
+
+; Endianness metadata
+mt-endianness = $ ("0001000" BIT)
+
+; Size metadata
+mt-size = $ "00011000" 8BYTE
+
+; Data
+data  = *entry
+entry = folder / collection / number / boolean / string / blob
+
+; String
+string         =  $ "01000000" tiny-string
+string         =/ $ "01000001" short-string
+string         =/ $ "01000010" average-string
+string         =/ $ "01000011" long-string
+tiny-string    =  1BYTE 0*255BYTE
+short-string   =  2BYTE 0*65535BYTE
+average-string =  4BYTE 0*4294967295BYTE
+long-string    =  8BYTE 0*18446744073709551615BYTE
+
+; Internal symbols
+utf8-string = *utf8-char
+utf8-char   = 1*4BYTE
+....
+
+=== Annex and precisions
+
+==== Manifest
+
+The static part of the manifest (`magic`, `version` and `mt-size`) is designed to fit on 8 bytes.
+
+The `version` fits on two bytes: the first one represents the major version and the second one represents the minor version. Every breaking change to the TPK specification will trigger a major version bump.
+
+Here is a table of existing TPK versions at the time of writing:
+[cols="1,1,2"]
+|===
+|First Byte|Second Byte|TPK Version
+
+|`0x01`
+|`0x00`
+|TPK 1.0 (Public Release)
+
+|`0xFF`
+|`0xFF`
+|TPK Unstable
+|===
+
+The `mt-size` represents the size of the metadata entries, in little-endian order bytes. Note that this excludes those eight first fixed manifest bytes.
+
+==== Extension metadata
+
+A TPK extension is declared using a short name `mt-ext-namever` and assigned to an identifier `mt-ext-id` which will be used throughout the file to identify extension entries.
+
+The `mt-ext-namever` should be of format `Extension Name/Version` with the name being unique and the version following semver semantics, but this is not strictly required, especially for in-house / non-public extensions.
+
+The `mt-ext-id` fits on four bits, which is why a TPK file can contain no more than 16 extensions by default. This limit is enough for most use cases, and can be extended further with an extension.
+
+Extension dependencies are included in the 2-byte `mt-dependencies` bit field. This bit field is conveniently 16 bits long: the requirement of extensions 0-7 will be stored in order in the first byte, while for extensions 8-15 it will be stored in the second one.
+
+For example, bytes `00010000 00000001` will mean that the extension `3` and the extension `15` are both required. The reader should end in error if it does not understand those extensions, and of course it is required for them to be defined.
+
+==== Endianness metadata
+
+The `mt-endianness` is a value-less metadata entry. The endianness of the file is stored in the least significant bit of the key - so the metadata entry can have two different keys:
+
+[cols="1,1"]
+|===
+|Key|Endianness
+
+|`00010000`
+|Little-endian (default)
+
+|`00010001`
+|Big-endian
+|===
+
+The endianness will affect any numeric primitive, as well as size values throughout the package. Note that this only applies for *subsequent* values, so it is recommended to have the endianness flag as early as possible in the manifest to avoid confusion.
+
+==== Size metadata
+
+The `mt-size` contains the key of the size metadata entry (`00011000`), and the size of the data block entry, in bytes.
