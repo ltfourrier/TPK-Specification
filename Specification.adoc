@@ -13,10 +13,10 @@ This document specifies the requirements for:
 
 Tiwind Package is a binary data container format which has the following capabilities:
 
-* Store applicative primitive types, like both signed and unsigned numbers, integers, UTF-8 strings, booleans...
+* Store applicative primitive types, like numbers, strings, booleans...
 * Store files, payloads or other data as binary blobs.
 * Organize data in a filesystem-like structure, with an implicit folder as the root.
-* Support extensions, which are designed to be optional or not, for both the _reader_ and the _writer_.
+* Support extensions, which are designed to be either required or optional.
 
 === Motivations
 
@@ -39,89 +39,88 @@ These concepts are important to understand how the Tiwind Package format works, 
 
 === Package
 
-A package is the entirety of both the data and metadata contained by a Tiwind Package: it contains everything that the file or payload has to contain.
-
-A package contains two main elements:
+A package is the entirety of both the data and metadata contained in a Tiwind Package. It contains two main elements:
 
 * A manifest, which contains metadata about the package: TPK version, extensions, package options, etc...
-* A data block, which will contain the data for every entry that the manifest has declared.
+* A data block, which contains the data itself, structured in _entries_.
 
 === Manifest
 
-A manifest contains metadata about the package, and the data it contains. This metadata can be useful for various reasons: giving hints to the _reader_ on how to read the file, or giving information that the human operating the _reader_ might be interested in.
+A manifest contains metadata about the package. It is primarily useful for giving hints or instructions to the _reader_ on how to read the file.
 
-Most manifest data is optional, and as such is presented to the _reader_ in a key/value fashion. There are a few required values that are common to all packages, and as such are key-less:
+Most manifest data is optional, and is presented to the _reader_ in a key/value fashion. There are a few required values that are common to all packages, and as such are key-less:
 
-* The TPK magic bits and version number,
+* The TPK magic bytes and version number,
 * The size of the metadata block.
 
-The rest of the manifest is then organized using a dictionary of keys and values. Keys are a single byte of data identifying the value, whose length and format depends on which type of metadata it represents.
+The rest of the manifest is then organized using a dictionary of keys and values. Keys are a single byte identifying the value, whose length and format depends on which type of metadata it represents.
 
-Those elements are all optional, and may contain the following data:
+Those key/values are all optional, and may contain the following data:
 
 * The extension identifiers for each of the 16 extension slots available,
 * The extension dependencies,
-* The endianness of the multi-byte values present in the package,
-* The size of the package, in its entirety.
+* The endianness to use for the multi-byte values present in the package,
+* The size of the data block, in its entirety.
 
 There is only one manifest per package.
 
 === Data Block
 
-A data block contains the root folder and every single entry it might contain, recursively. In short, it contains the data that the package is supposed to contain.
+A data block contains a sequence of entries that structure and represent the data that the package contains.
 
-The data block is presented in a filesystem-like structure. This can be seen as a semantic decision when comparing TPK to another data container format: dictionaries are folders, arrays are collections and entries are files; but this is an important one when thinking about extensibility.
+While TPK emulates a filesystem-like structure, the data block itself is a completely flat data structure. Indeed, TPK uses a "cursor" that moves inside this virtual filesystem to structure data, but the data block itself has no real structure.
 
 === Entries
 
-An entry, also called a file, is a single element present in the data block. This element might represent structural data such as folders or collections, actual data such as binary blobs or strings, metadata or even custom extension data.
+An entry is a single element present in the data block. This element might represent cursor changes for folders or collections, actual data such as binary blobs or strings, metadata or even custom extension data.
 
-It is important to note that while the file is structured, there is no notion of hierarchy associated with an entry. For example, a folder entry does not contain entries, but merely instructs the reader to enter the folder with the given name.
+It is important to note, once again, that while the file is structured, there is no notion of hierarchy associated with an entry. For example, a folder entry does not contain entries, but merely instructs the _reader_ to enter the folder with the given name.
+
+An entry is composed of a marker element and one or more data elements.
 
 === Markers
 
-A marker indicates that every subsequent entry will belong to the same named (or indexed) group, which is mostly used by extensions to extend a standard type with data or metadata. Under standard (extension-less) circumstances, having more than one data entry after a marker entry is useless, as only the first data entry will be bound to that name or index.
+A marker indicates that every subsequent element will belong to the same named (or indexed) group, which is mostly used by extensions to extend a standard type with data or metadata. Under standard (extension-less) circumstances, having more than one data element after a marker element is useless, as only the first data element will be bound to that name or index.
 
-A marker has a name, and at least one subsequent data entry. The name is expected to be empty (zero-length marker) under collection mode, so an index can automatically be generated.
+A marker element contains a name, and at least one subsequent data element. The name is expected to be empty while under collection mode, so an index can be automatically generated.
 
 === Folders
 
-A folder is both a concept and a kind of entry.
+A folder is both a concept and a kind of element.
 
-The concept of a folder is to have a named container that contains other named data. In that sense, it is not much different from what you would expect from a dictionary or object to be in a different format.
+The concept of a folder is to have a named container that contains other named data. In that sense, it is not much different from what you would expect from a dictionary or object to be in any other format.
 
-A folder entry is a special instruction contained in the data block that tells the reader to jump into a folder named or indexed by the previous marker entry. This means that every subsequent entries will be considered part of this named container.
+A folder element is a special instruction contained in the data block that tells the reader to jump into a folder named or indexed by the previous marker element. This means that every subsequent entries will be considered part of this container.
 
-A folder entry can go in both directions or even start from the root, similarly to what you'd expect from the argument given to a `cd` command on a Unix filesystem, for example.
+A folder element can go in both directions or even start from the root, similarly to what you'd expect from the argument given to a `cd` command on a Unix filesystem, for example.
 
 === Collections
 
-A collection is a special type of folder, whose entries are automatically given a numeric name, called an index. This index starts at zero, and is incremented by one for every entry that is added to the collection. Marker entries in a collection context should have a zero-length name, as indices are automatically attributed.
+A collection is a special type of folder, whose entries are automatically given a numeric name, called an index. This index starts at zero, and is incremented by one for every entry that is added to the collection.
 
-A collection entry instructs the reader to go into collection mode, which:
-
-* Disables naming for every subsequent marker entry, as indices are automatically generated.
-* Waits for another folder entry to disable collection mode.
+Marker elements in a collection context should have a zero-length name, as indices are automatically attributed.
 
 ==== Interoperability with Folders
 
-Since collections are special folders, they can interact closely with other folder entries. For example, in order to close a collection, a `..` folder entry can be provided.
+Since collections are special folders, they can interact closely with other folder elements. For example, in order to close a collection, a folder element with a `..` marker can be provided.
 
-Folder entries can also be used to enter existing collection paths. As an example, let's consider the following case:
+Folder elements can also be used to enter existing collection paths. As an example, let's consider the following case:
 
 * A collection `apples` is created in the `/fruits` folder.
 * Three folders containing data about each individual apple are added to the collection.
 * The writer does some other processing and fully exits the `/fruits/apples` collection.
 * Later while writing the package, the writer wants to modify a value in the second apple in stock.
-* A `/fruits/apples/1` folder entry would instruct the reader to jump into the second element in the `/fruits/apples` collection.
+* A folder element with the `/fruits/apples/1` marker would instruct the reader to jump into the second element in the `/fruits/apples` collection.
 
-Note that this index folder notation only works with existing elements. It is not possible to create new elements in the collection using a folder entry.
+Note that this index folder notation only works with existing entries. It is not possible to create new entries in the collection using a folder element.
 
-These two cases are the only ones where collection/folder interoperability is allowed. It is not possible, for example, to use a folder entry to jump into a collection and vice-versa.
+Similarly, existing entries in a non-collection folder can be modified using this method.
+
+These two cases are the only ones where collection/folder interoperability is allowed. It is not possible, for example, to use a folder element to jump into a collection and vice-versa.
 
 === Primitives
 
-Primitives are entries that simply maps a single path to a single chunk of data. This chunk of data is typed, and can be one of the following:
+Primitives are elements that simply represent a single chunk of data. This chunk of data is typed, and can be one of the following:
 
 * A number, with the following variations:
 ** Signed or Unsigned
@@ -133,23 +132,23 @@ Primitives are entries that simply maps a single path to a single chunk of data.
 
 === Extensions
 
-Extensions are flags to activate additional rules that can be given to the reader from the writer. This implies, of course, that both the reader and the writer know about the rules of the extension.
+Extensions are flags to activate additional rules defined by the _reader_, and optionally (unless declared otherwise) known by the writer.
 
-A registered extension is given one custom entry type. If the extension requires more than one entry type, then it needs to implement its own type system inside of the extension entry.
+A registered extension is given one custom element type. If the extension requires more than one element type, then it needs to implement its own type system inside the extension element.
 
 There is two types of extensions:
 
-* Optional extensions, which extend the data that already exists as base TPK entries. This means that even if the reader does not know about this extension, the data contained in the package can still fully or partially make sense by simply ignoring extension entries.
-* Mandatory extensions, which would make the data unreadable or not make sense at all if the reader does not understand the extension entries.
+* Optional extensions, which usually extend standard TPK elements. This means that even if the reader does not know about this extension, the data contained in the package can still fully or partially make sense by simply ignoring extension elements.
+* Mandatory extensions, which would make the data unreadable or not make sense at all if the reader does not understand the extension elements.
 
-It is strongly discouraged to use mandatory extensions. Thanks to TPK's folder-like structure, most extensions can be implemented as optional, but it is sometimes necessary to use mandatory extensions, when the size of an extension entry is not known at writing time, for example.
+It is strongly discouraged to use mandatory extensions. Thanks to TPK's entry-based structure, most extensions can be implemented as optional, but it is sometimes necessary to use mandatory extensions, when the size of an extension element cannot be known in advance, for example.
 
 ==== Conventions
 
 There's a few conventions to adhere to while implementing TPK extensions, to avoid as much as possible collision between extensions:
 
-* The names of entries that contain metadata should begin with `.`.
-* Extensions should always try to bring new features by extending on base ones. For example, instead of defining a new folder type, a special metadata entry should be added inside of a base folder entry.
+* The names of entries (folders or otherwise) that only contain metadata should begin with `.`, or have a parent folder whose name begins with `.`.
+* Extensions should always try to bring new features by extending on base ones. For example, instead of defining a new folder element type, a special metadata element should be added after the standard folder element inside an entry.
 
 == TPK Syntax
 
@@ -163,7 +162,7 @@ manifest = magic version mt-size *mt-entry
 magic    = %s"FRVD"
 version  = 2BYTE
 mt-size  = 2BYTE
-mt-entry = mt-extension / mt-dependencies / mt-endianness / mt-size
+mt-entry = mt-extension / mt-dependencies / mt-endianness / mt-data-size
 
 ; Extension metadata
 mt-extension    = $ ("0000" ext-id) mt-ext-namever
@@ -174,13 +173,14 @@ mt-dependencies = 2BYTE
 mt-endianness = $ ("0001000" BIT)
 
 ; Size metadata
-mt-size = $ "00011000" 8BYTE
+mt-data-size = $ "00011000" 8BYTE
 
 ; Data
-data        =  *(marker *entry)
-entry       =  folder / collection
-entry       =/ number / boolean / string / blob
-entry       =/ extension
+data        =  *entry
+entry       =  marker *element
+element     =  folder / collection
+element     =/ number / boolean / string / blob
+element     =/ extension
 marker      =  $ ("1" has-more 6BIT) *($ (has-more 7BIT)) *BYTE
 
 ; Folder
@@ -237,8 +237,8 @@ average-blob =  4BYTE 0*4294967295BYTE
 long-blob    =  8BYTE 0*18446744073709551615BYTE
 
 ; Extension
-extension = $ (0111 ext-id) [ext-entry-size] *BYTE
-ext-entry-size = $ (has-more 7BIT)
+extension     = $ (0111 ext-id) [ext-entry-size] *BYTE
+ext-data-size = $ (has-more 7BIT)
 
 ; Grammatical rules
 has-more = BIT
@@ -271,15 +271,24 @@ The `mt-size` represents the size of the metadata entries, in little-endian orde
 
 ==== Extension metadata
 
-A TPK extension is declared using a short name `mt-ext-namever` and assigned to an identifier `mt-ext-id` which will be used throughout the file to identify extension entries.
+A TPK extension is declared using a short name `mt-ext-namever` and assigned to an identifier `ext-id` which will be used throughout the file to identify extension elements.
 
 The `mt-ext-namever` should be of format `Extension Name/Version` with the name being unique and the version following semver semantics, but this is not strictly required, especially for in-house / non-public extensions.
 
-The `mt-ext-id` fits on four bits, which is why a TPK file can contain no more than 16 extensions by default. This limit is enough for most use cases, and can be extended further with an extension.
+The `ext-id` fits on four bits, which is why a TPK file can contain no more than 16 extensions by default. This limit is enough for most use cases, and can be extended further with an extension.
 
-Extension dependencies are included in the 2-byte `mt-dependencies` bit field. This bit field is conveniently 16 bits long: the requirement of extensions 0-7 will be stored in order in the first byte, while for extensions 8-15 it will be stored in the second one.
+Extension dependencies are included in the 2-byte `mt-dependencies` bit field. This bit field is conveniently 16 bits long: the requirement of extensions 0-7 will be stored in order in the first byte, while for extensions 8-15 it will be stored in the second one, as such:
 
-For example, bytes `00010000 00000001` will mean that the extension `3` and the extension `15` are both required. The reader should end in error if it does not understand those extensions, and of course it is required for them to be defined.
+....
+┌──┬──┬──┬──┬──┬──┬──┬──┐
+│00│01│02|03|04|05|06|07│ Byte 1
+└──┴──┴──┴──┴──┴──┴──┴──┘
+┌──┬──┬──┬──┬──┬──┬──┬──┐
+│08│09│10|11|12|13|14|15│ Byte 2
+└──┴──┴──┴──┴──┴──┴──┴──┘
+....
+
+where, for every extension identifier, `1` means that the extension is required and `0` means that it is optional.
 
 ==== Endianness metadata
 
@@ -296,21 +305,23 @@ The `mt-endianness` is a value-less metadata entry. The endianness of the file i
 |Big-endian
 |===
 
-The endianness will affect any numeric primitive, as well as size values throughout the package. Note that this only applies for *subsequent* values, so it is recommended to have the endianness flag as early as possible in the manifest to avoid confusion.
+The endianness will affect any numeric primitive, as well as some size values throughout the package. Note that this only applies for *subsequent* values, so it is recommended to have the endianness flag as early as possible in the manifest to avoid confusion.
 
 ==== Size metadata
 
 The `mt-size` contains the key of the size metadata entry (`00011000`), and the size of the data block entry, in bytes.
 
+The size of the data block entry is stored in eight bytes, with the currently configured endianness.
+
 ==== Entries
 
-Marker entries are composed of the following elements:
+Marker elements are composed of the following parts:
 
 * The type byte that also contains 6 bits for name size, which is particularly useful for small names,
 * Extensible additional size bytes,
 * The name data itself.
 
-The first byte is represented as such:
+The type byte is represented as such:
 
 ....
 ┌─┬─┬───────────┐
@@ -321,7 +332,7 @@ The first byte is represented as such:
 where:
 
 * `A` = `0` if the size of the name fits on the type byte (size < 64), and `1` otherwise,
-* `N` = the six most significant bits of the size.
+* `N` = the six most significant bits of the size, left-padded with `0` to fit the whole available space, including additional size bytes.
 
 Every additional size byte is structured like this:
 
@@ -336,15 +347,15 @@ where:
 * `A` = `0` if this is the last size byte, `1` otherwise,
 * `N` = the seven next most significant bytes of the name size.
 
-And finally, the name data is composed of `N` bytes (`N` being the concatenation of all the bits read as part of the type and additional size bytes), which must form a valid UTF-8 string that represents the name of the marker entry.
+And finally, the name data is composed of `N` bytes (`N` being the concatenation of all the bits read as part of the type and additional size bytes), which must form a valid UTF-8 string that represents the name of the entry.
 
-Note that, when a marker entry is read in the context of a collection, the size of the name is expected to be zero, and no name should be present. This means that in this case, the marker entry should only consist of one byte: `10000000`.
+Note that, when a marker element is read in the context of a collection, the size of the name is expected to be zero, and no name should be present. This means that in this case, the marker entry should only consist of one byte: `10000000`.
 
 ==== Folders
 
-Since folders entries are just instructions that point to a named folder, they only consist of their type byte with no additional data. The path/name of the folder is taken from the previous entry, which must be a marker entry.
+Since folders elements are just instructions that point to a named folder, they only consist of their type byte with no additional data. The path/name of the folder is taken from the entry's marker element.
 
-Collections work the same way, but with a different type byte, and the previous marker entry should have an empty (zero-length) name.
+Collections work the same way, but with a different type byte, and the entry's market element should have an empty (zero-length) name.
 
 ==== Numbers
 
@@ -354,7 +365,7 @@ The `number` primitive can be of the following types:
 * A signed integer,
 * A IEEE 754 floating-point number.
 
-Additionally, the `number` primitive can have different word sizes: those sizes are the ones found in a standard 64-bit architecture: 8 bits, 16 bits, 32 bits and 64 bits. The bytes are arranged in little-endian by default, although they can be turned into big-endian using a metadata flag in the manifest.
+Additionally, the `number` primitive can have different sizes: those sizes are the ones found in a standard 64-bit architecture: 8 bits, 16 bits, 32 bits and 64 bits. The bytes are arranged in little-endian by default, although they can be turned into big-endian using a metadata flag in the manifest.
 
 All of this metadata is stored in the type byte as such:
 
@@ -372,7 +383,7 @@ where :
 
 ==== Booleans
 
-Booleans are fairly easy to understand. They have no size: their value is stored in the type byte as such, where `A` is their value:
+Booleans are fairly easy to understand. They have no size: their value is stored in the type byte as such:
 
 ....
 ┌─┬─────┬─────┬─┐
@@ -380,11 +391,13 @@ Booleans are fairly easy to understand. They have no size: their value is stored
 └─┴─────┴─────┴─┘
 ....
 
+where `A` is their value (`0` for false and `1` for true).
+
 ==== Strings
 
-Strings are composed of their size (in bytes), followed by their value, encoded in UTF-8.
+Strings are composed of their size (in bytes, excluding the type and size bytes), followed by their value, encoded in UTF-8.
 
-The size of the string can belong to multiple ranges and can be encoded on a varying number of bytes, like numbers. The endianness of the size also depends on whether the file is configured to be little-endian or big-endian (but remember that little-endian is the default!).
+The size of the string can be stored on a varying number of bytes, like numbers. The endianness of the size also depends on whether the file is configured to be little-endian or big-endian (but remember that little-endian is the default!).
 
 The type byte of a string looks like this:
 
@@ -396,7 +409,7 @@ The type byte of a string looks like this:
 
 where:
 
-* `N` = `00` for a size stored on one byte, `0 1` for two bytes, `1 0` for four bytes and `1 1` for eight bytes.
+* `N` = `00` for a string size stored on one byte, `01` for two bytes, `10` for four bytes and `11` for eight bytes.
 
 ==== Binary blobs
 
@@ -410,13 +423,13 @@ Blobs work exactly the same way as strings do. For this reason, they share the s
 
 ==== Extensions
 
-Extensions entries consist of the following data:
+Extensions elements consist of the following data:
 
-* A type byte, which contains the identifier of the extension the entry belongs to,
+* A type byte, which contains the identifier of the extension the element belongs to,
 * The size of the extension data, in bytes and excluding the type byte and the size bytes,
 * The extension data itself.
 
-Note that, for non-optional extensions, it is up to the extension to require the presence of the size bytes or not. For normal, optional extensions, the size is required in order to help readers who do not have the required extension to skip the entry.
+Note that, for required extensions, it is up to the extension to expect the presence of the size bytes or not. For normal, optional extensions, the size is required in order to help readers who do not have the required extension to skip the entry.
 
 The structure of the type byte is as follows:
 
@@ -428,7 +441,7 @@ The structure of the type byte is as follows:
 
 where `E` = the identifier of the extension declared in the manifest.
 
-The size bytes are extensible and work similarly to the ones that can be found in marker entries:
+The size bytes are extensible and work similarly to the ones that can be found in marker elements:
 
 ....
 ┌─┬─────────────┐
