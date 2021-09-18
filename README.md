@@ -1,31 +1,5 @@
-# tpk/TPK-Specification
+# TPK Specification
 
+> :warning: **READ-ONLY REPOSITORY**: This repository is a mirror of Tiwind's internal repository.
 
-
-## Getting Started
-
-Download links:
-
-SSH clone URL: ssh://git@git.jetbrains.space/tiwind/tpk/TPK-Specification.git
-
-HTTPS clone URL: https://git.jetbrains.space/tiwind/tpk/TPK-Specification.git
-
-
-
-These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
-
-## Prerequisites
-
-What things you need to install the software and how to install them.
-
-```
-Examples
-```
-
-## Deployment
-
-Add additional notes about how to deploy this on a production system.
-
-## Resources
-
-Add links to external resources for this project, such as CI server, bug tracker, etc.
+This repository contains the specification for the Tiwind PacKage format.
