@@ -7,7 +7,7 @@ Laurent T. Fourrier <ltfourrier@gmail.com>
 This document specifies the requirements for:
 
 * Tiwind Package files and payloads,
-* Implementation that consumes or produces Tiwind Package files and payloads.
+* Implementations that consume or produce Tiwind Package files and payloads.
 
 == Introduction
 
@@ -29,7 +29,7 @@ In particular, Tiwind Packages are meant to answer the following needs:
 * Be both written and read with as little copy as possible.
 * Be as buffer-efficient as possible during reading or writing.
 * Be as extensible as possible, while providing a common base to simplify implementations for custom needs.
-* Be streamable, or even be used in an client-server exchange kind of way, thanks to extensions.
+* Be streamable, or even be used for client-server exchange, thanks to extensions.
 
 == Concepts
 
@@ -78,23 +78,29 @@ An entry, also called a file, is a single element present in the data block. Thi
 
 It is important to note that while the file is structured, there is no notion of hierarchy associated with an entry. For example, a folder entry does not contain entries, but merely instructs the reader to enter the folder with the given name.
 
+=== Markers
+
+A marker indicates that every subsequent entry will belong to the same named (or indexed) group, which is mostly used by extensions to extend a standard type with data or metadata. Under standard (extension-less) circumstances, having more than one data entry after a marker entry is useless, as only the first data entry will be bound to that name or index.
+
+A marker has a name, and at least one subsequent data entry. The name is expected to be empty (zero-length marker) under collection mode, so an index can automatically be generated.
+
 === Folders
 
 A folder is both a concept and a kind of entry.
 
 The concept of a folder is to have a named container that contains other named data. In that sense, it is not much different from what you would expect from a dictionary or object to be in a different format.
 
-A folder entry is a special instruction contained in the data block that tells the reader to jump into a folder of a given name. This means that every subsequent entries will be considered part of this named container.
+A folder entry is a special instruction contained in the data block that tells the reader to jump into a folder named or indexed by the previous marker entry. This means that every subsequent entries will be considered part of this named container.
 
 A folder entry can go in both directions or even start from the root, similarly to what you'd expect from the argument given to a `cd` command on a Unix filesystem, for example.
 
 === Collections
 
-A collection is a special type of folder, whose entries are automatically given a numeric name, called an index. This index starts at zero, and is incremented by one for every entry that is added to the collection. Collections can only contain entries with numeric names.
+A collection is a special type of folder, whose entries are automatically given a numeric name, called an index. This index starts at zero, and is incremented by one for every entry that is added to the collection. Marker entries in a collection context should have a zero-length name, as indices are automatically attributed.
 
 A collection entry instructs the reader to go into collection mode, which:
 
-* Disables naming for every subsequent entry, as indices are automatically generated.
+* Disables naming for every subsequent marker entry, as indices are automatically generated.
 * Waits for another folder entry to disable collection mode.
 
 ==== Interoperability with Folders
@@ -160,8 +166,7 @@ mt-size  = 2BYTE
 mt-entry = mt-extension / mt-dependencies / mt-endianness / mt-size
 
 ; Extension metadata
-mt-extension    = $ ("0000" mt-ext-id) mt-ext-namever
-mt-ext-id       = 4BIT
+mt-extension    = $ ("0000" ext-id) mt-ext-namever
 mt-ext-namever  = tiny-string
 mt-dependencies = 2BYTE
 
@@ -172,22 +177,72 @@ mt-endianness = $ ("0001000" BIT)
 mt-size = $ "00011000" 8BYTE
 
 ; Data
-data  = *entry
-entry = folder / collection / number / boolean / string / blob
+data        =  *(marker *entry)
+entry       =  folder / collection
+entry       =/ number / boolean / string / blob
+entry       =/ extension
+marker      =  $ ("1" has-more 6BIT) *($ (has-more 7BIT)) *BYTE
+
+; Folder
+folder     = $ "00000000"
+collection = $ "00000001"
+
+; Number
+number              =  $ "00100000" 8b-unsigned-number
+number              =/ $ "00100001" 16b-unsigned-number
+number              =/ $ "00100010" 32b-unsigned-number
+number              =/ $ "00100011" 64b-unsigned-number
+number              =/ $ "00100100" 8b-signed-number
+number              =/ $ "00100101" 16b-signed-number
+number              =/ $ "00100110" 32b-signed-number
+number              =/ $ "00100111" 64b-signed-number
+number              =/ $ "00101100" 8b-decimal-number
+number              =/ $ "00101101" 16b-decimal-number
+number              =/ $ "00101110" 32b-decimal-number
+number              =/ $ "00101111" 64b-decimal-number
+8b-unsigned-number  =  1BYTE
+16b-unsigned-number =  2BYTE
+32b-unsigned-number =  4BYTE
+64b-unsigned-number =  8BYTE
+8b-signed-number    =  1BYTE
+16b-signed-number   =  2BYTE
+32b-signed-number   =  4BYTE
+64b-signed-number   =  8BYTE
+8b-decimal-number   =  1BYTE
+16b-decimal-number  =  2BYTE
+32b-decimal-number  =  4BYTE
+64b-decimal-number  =  8BYTE
+
+; Boolean
+boolean = $ ("00110000" / "00110001")
 
 ; String
-string         =  $ "01000000" tiny-string
-string         =/ $ "01000001" short-string
-string         =/ $ "01000010" average-string
-string         =/ $ "01000011" long-string
+string         =  $ "00010000" tiny-string
+string         =/ $ "00010001" short-string
+string         =/ $ "00010010" average-string
+string         =/ $ "00010011" long-string
 tiny-string    =  1BYTE 0*255BYTE
 short-string   =  2BYTE 0*65535BYTE
 average-string =  4BYTE 0*4294967295BYTE
 long-string    =  8BYTE 0*18446744073709551615BYTE
 
-; Internal symbols
-utf8-string = *utf8-char
-utf8-char   = 1*4BYTE
+; Binary blob
+blob         =  $ "00010100" tiny-blob
+blob         =/ $ "00010101" short-blob
+blob         =/ $ "00010110" average-blob
+blob         =/ $ "00010111" long-blob
+tiny-blob    =  1BYTE 0*255BYTE
+short-blob   =  2BYTE 0*65535BYTE
+average-blob =  4BYTE 0*4294967295BYTE
+long-blob    =  8BYTE 0*18446744073709551615BYTE
+
+; Extension
+extension = $ (0111 ext-id) [ext-entry-size] *BYTE
+ext-entry-size = $ (has-more 7BIT)
+
+; Grammatical rules
+has-more = BIT
+ext-id   = 4BIT
 ....
 
 === Annex and precisions
@@ -203,13 +258,13 @@ Here is a table of existing TPK versions at the time of writing:
 |===
 |First Byte|Second Byte|TPK Version
 
+|`0x00`
+|`0x00`
+|TPK Unstable
+
 |`0x01`
 |`0x00`
-|TPK 1.0 (Public Release)
-
-|`0xFF`
-|`0xFF`
-|TPK Unstable
+|TPK1 - Public Release
 |===
 
 The `mt-size` represents the size of the metadata entries, in little-endian order bytes. Note that this excludes those eight first fixed manifest bytes.
@@ -246,3 +301,142 @@ The endianness will affect any numeric primitive, as well as size values through
 ==== Size metadata
 
 The `mt-size` contains the key of the size metadata entry (`00011000`), and the size of the data block entry, in bytes.
+
+==== Entries
+
+Marker entries are composed of the following elements:
+
+* The type byte that also contains 6 bits for name size, which is particularly useful for small names,
+* Extensible additional size bytes,
+* The name data itself.
+
+The first byte is represented as such:
+
+....
+┌─┬─┬───────────┐
+│1│A│N N N N N N│
+└─┴─┴───────────┘
+....
+
+where:
+
+* `A` = `0` if the size of the name fits on the type byte (size < 64), and `1` otherwise,
+* `N` = the six most significant bits of the size.
+
+Every additional size byte is structured like this:
+
+....
+┌─┬─────────────┐
+│A│N N N N N N N│
+└─┴─────────────┘
+....
+
+where:
+
+* `A` = `0` if this is the last size byte, `1` otherwise,
+* `N` = the seven next most significant bytes of the name size.
+
+And finally, the name data is composed of `N` bytes (`N` being the concatenation of all the bits read as part of the type and additional size bytes), which must form a valid UTF-8 string that represents the name of the marker entry.
+
+Note that, when a marker entry is read in the context of a collection, the size of the name is expected to be zero, and no name should be present. This means that in this case, the marker entry should only consist of one byte: `10000000`.
+
+==== Folders
+
+Since folders entries are just instructions that point to a named folder, they only consist of their type byte with no additional data. The path/name of the folder is taken from the previous entry, which must be a marker entry.
+
+Collections work the same way, but with a different type byte, and the previous marker entry should have an empty (zero-length) name.
+
+==== Numbers
+
+The `number` primitive can be of the following types:
+
+* A unsigned integer,
+* A signed integer,
+* A IEEE 754 floating-point number.
+
+Additionally, the `number` primitive can have different word sizes: those sizes are the ones found in a standard 64-bit architecture: 8 bits, 16 bits, 32 bits and 64 bits. The bytes are arranged in little-endian by default, although they can be turned into big-endian using a metadata flag in the manifest.
+
+All of this metadata is stored in the type byte as such:
+
+....
+┌─┬─────┬─┬─┬───┐
+│0│0 1 0│A│B│N N│
+└─┴─────┴─┴─┴───┘
+....
+
+where :
+
+* `A` = `0` if the number is an integer, or `1` if it is a IEEE 754 floating-point number.
+* `B` = `0` if the number is unsigned, or `1` if the number is signed. Note that floating-point numbers cannot be unsigned, so `A B = 1 0` is not possible.
+* `N` = `00` for a 8-bit number, `01` for a 16-bit number, `10` for a 32-bit number and `11` for a 64-bit number.
+
+==== Booleans
+
+Booleans are fairly easy to understand. They have no size: their value is stored in the type byte as such, where `A` is their value:
+
+....
+┌─┬─────┬─────┬─┐
+│0│0 1 1│0 0 0│A│
+└─┴─────┴─────┴─┘
+....
+
+==== Strings
+
+Strings are composed of their size (in bytes), followed by their value, encoded in UTF-8.
+
+The size of the string can belong to multiple ranges and can be encoded on a varying number of bytes, like numbers. The endianness of the size also depends on whether the file is configured to be little-endian or big-endian (but remember that little-endian is the default!).
+
+The type byte of a string looks like this:
+
+....
+┌─┬─────┬───┬───┐
+│0│0 0 1│0 0│N N│
+└─┴─────┴───┴───┘
+....
+
+where:
+
+* `N` = `00` for a size stored on one byte, `0 1` for two bytes, `1 0` for four bytes and `1 1` for eight bytes.
+
+==== Binary blobs
+
+Blobs work exactly the same way as strings do. For this reason, they share the same four most significant bits of the type byte, but have a different "encoding bit":
+
+....
+┌─┬─────┬───┬───┐
+│0│0 0 1│0 1│N N│
+└─┴─────┴───┴───┘
+....
+
+==== Extensions
+
+Extensions entries consist of the following data:
+
+* A type byte, which contains the identifier of the extension the entry belongs to,
+* The size of the extension data, in bytes and excluding the type byte and the size bytes,
+* The extension data itself.
+
+Note that, for non-optional extensions, it is up to the extension to require the presence of the size bytes or not. For normal, optional extensions, the size is required in order to help readers who do not have the required extension to skip the entry.
+
+The structure of the type byte is as follows:
+
+....
+┌─┬─────┬───────┐
+│0│1 1 1│E E E E│
+└─┴─────┴───────┘
+....
+
+where `E` = the identifier of the extension declared in the manifest.
+
+The size bytes are extensible and work similarly to the ones that can be found in marker entries:
+
+....
+┌─┬─────────────┐
+│A│N N N N N N N│
+└─┴─────────────┘
+....
+
+where:
+
+* `A` = `1` if there is more size bytes to follow, and `0` otherwise.
+* `N` = the seven next most significant bytes of the data size.
